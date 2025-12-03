@@ -957,7 +957,18 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
     ch = [ch]
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
-        m = getattr(torch.nn, m[3:]) if "nn." in m else globals()[m]  # get module
+        if "nn." in m:
+            m = getattr(torch.nn, m[3:])
+        else:
+            try:
+                m = globals()[m]
+            except KeyError:
+                # Fallback: try importing from ultralytics.nn.modules
+                from ultralytics.nn.modules import __all__
+                if m in __all__:
+                    m = getattr(__import__("ultralytics.nn.modules", fromlist=[m]), m)
+                else:
+                    raise KeyError(f"Module '{m}' not found in globals() or ultralytics.nn.modules")
         for j, a in enumerate(args):
             if isinstance(a, str):
                 with contextlib.suppress(ValueError):
@@ -981,6 +992,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2,
             C2f,
             C3k2,
+            C3k2ECA,
             RepNCSPELAN4,
             ELAN1,
             ADown,
