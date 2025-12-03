@@ -42,6 +42,7 @@ __all__ = (
     "CBFuse",
     "CBLinear",
     "C3k2",
+    "C3k2ECA",
     "C2fPSA",
     "C2PSA",
     "RepVGGDW",

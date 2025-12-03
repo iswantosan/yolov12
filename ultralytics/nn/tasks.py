@@ -34,6 +34,7 @@ from ultralytics.nn.modules import (
     C2fPSA,
     C3Ghost,
     C3k2,
+    C3k2ECA,
     C3x,
     CBFuse,
     CBLinear,
