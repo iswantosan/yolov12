@@ -16,6 +16,7 @@ __all__ = (
     "HGStem",
     "SPP",
     "SPPF",
+    "ECA",
     "C1",
     "C2",
     "C3",
@@ -187,6 +188,42 @@ class SPPF(nn.Module):
         y = [self.cv1(x)]
         y.extend(self.m(y[-1]) for _ in range(3))
         return self.cv2(torch.cat(y, 1))
+
+
+class ECA(nn.Module):
+    """
+    Efficient Channel Attention (ECA) module.
+
+    This module applies lightweight channel attention without changing the number of channels.
+    """
+
+    def __init__(self, c1, c2, k_size: int = 3):
+        """
+        Initializes the ECA layer.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels (must be equal to c1, kept for YAML compatibility).
+            k_size (int): Kernel size for 1D convolution in the attention branch.
+        """
+        super().__init__()
+        assert (
+            c1 == c2
+        ), f"ECA requires c1 == c2 (got c1={c1}, c2={c2}). It does not change channel dimensions."
+        self.avg = nn.AdaptiveAvgPool2d(1)  # -> [B, C, 1, 1]
+        self.conv = nn.Conv1d(1, 1, k_size, padding=k_size // 2, bias=False)
+        self.sig = nn.Sigmoid()
+
+        self.c = c1  # for reference in model summaries
+
+    def forward(self, x):
+        """Applies efficient channel attention and returns re-weighted features."""
+        # x: [B, C, H, W]
+        y = self.avg(x)  # [B, C, 1, 1]
+        y = y.squeeze(-1).transpose(-1, -2)  # [B, 1, C]
+        y = self.conv(y)  # [B, 1, C]
+        y = self.sig(y).transpose(-1, -2).unsqueeze(-1)  # [B, C, 1, 1]
+        return x * y
 
 
 class C1(nn.Module):
@@ -731,6 +768,23 @@ class C3k2(C2f):
         self.m = nn.ModuleList(
             C3k(self.c, self.c, 2, shortcut, g) if c3k else Bottleneck(self.c, self.c, shortcut, g) for _ in range(n)
         )
+
+
+class C3k2ECA(C3k2):
+    """
+    C3k2 block followed by an ECA channel attention layer.
+
+    This keeps the same interface as C3k2, so it can be used as a drop-in replacement in YAML.
+    """
+
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True, k_size: int = 3):
+        super().__init__(c1, c2, n=n, c3k=c3k, e=e, g=g, shortcut=shortcut)
+        self.eca = ECA(c2, c2, k_size=k_size)
+
+    def forward(self, x):
+        """Forward pass through C3k2 block with ECA channel attention."""
+        x = super().forward(x)
+        return self.eca(x)
 
 
 class C3k(C3):
