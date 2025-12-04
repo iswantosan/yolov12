@@ -1464,41 +1464,47 @@ class ASFF(nn.Module):
         
         self.ch_in = ch_in
         
-        # Channel adjustment layers (if needed)
-        if ch_in[0] != c1:
-            self.channel_adjust_0 = Conv(ch_in[0], c1, 1, 1)
+        # Channel adjustment layers - always use Conv for consistency and proper gradient flow
+        # For matching channels, use 1x1 conv initialized as identity
+        self.channel_adjust_0 = self._make_channel_adjust(ch_in[0], c1)
+        self.channel_adjust_1 = self._make_channel_adjust(ch_in[1], c1)
+        self.channel_adjust_2 = self._make_channel_adjust(ch_in[2], c1)
+    
+    def _make_channel_adjust(self, ch_in, ch_out):
+        """Create channel adjustment layer, using identity initialization if channels match."""
+        if ch_in == ch_out:
+            # Use 1x1 conv initialized as identity
+            adjust = nn.Conv2d(ch_in, ch_out, 1, 1, 0, bias=False)
+            # Initialize as identity matrix
+            with torch.no_grad():
+                adjust.weight.fill_(0)
+                for i in range(min(ch_in, ch_out)):
+                    adjust.weight[i, i, 0, 0] = 1.0
+            return adjust
         else:
-            self.channel_adjust_0 = nn.Identity()
-            
-        if ch_in[1] != c1:
-            self.channel_adjust_1 = Conv(ch_in[1], c1, 1, 1)
-        else:
-            self.channel_adjust_1 = nn.Identity()
-            
-        if ch_in[2] != c1:
-            self.channel_adjust_2 = Conv(ch_in[2], c1, 1, 1)
-        else:
-            self.channel_adjust_2 = nn.Identity()
+            # Use Conv with activation for channel change
+            return Conv(ch_in, ch_out, 1, 1)
         
         # Interpolation layers for different levels
+        # All stride layers now expect c1 channels (after channel adjustment)
         if level == 0:  # P3 level
             self.interp = nn.Upsample(scale_factor=2, mode='nearest')
-            self.stride_level_1 = Conv(c1, c1, 3, 2, 1)
+            self.stride_level_1 = Conv(c1, c1, 3, 2, 1)  # downsample level_1 to level_0 size
             self.stride_level_2 = nn.Sequential(
-                Conv(c1, c1, 3, 2, 1),
-                nn.MaxPool2d(kernel_size=2, stride=2)
+                Conv(c1, c1, 3, 2, 1),  # first downsample
+                nn.MaxPool2d(kernel_size=2, stride=2)  # second downsample
             )
         elif level == 1:  # P4 level
             self.interp = nn.Upsample(scale_factor=2, mode='nearest')
-            self.stride_level_0 = Conv(c1, c1, 3, 2, 1)
-            self.stride_level_2 = Conv(c1, c1, 3, 2, 1)
+            self.stride_level_0 = Conv(c1, c1, 3, 2, 1)  # downsample level_0 to level_1 size
+            self.stride_level_2 = Conv(c1, c1, 3, 2, 1)  # downsample level_2 to level_1 size
         else:  # P5 level
             self.interp = nn.Upsample(scale_factor=2, mode='nearest')
             self.stride_level_0 = nn.Sequential(
-                Conv(c1, c1, 3, 2, 1),
-                nn.MaxPool2d(kernel_size=2, stride=2)
+                Conv(c1, c1, 3, 2, 1),  # first downsample
+                nn.MaxPool2d(kernel_size=2, stride=2)  # second downsample
             )
-            self.stride_level_1 = Conv(c1, c1, 3, 2, 1)
+            self.stride_level_1 = Conv(c1, c1, 3, 2, 1)  # downsample level_1 to level_2 size
         
         # Learnable spatial attention weights
         self.weight_level_0 = Conv(c1, c1, 1, 1, act=False)
@@ -1527,24 +1533,24 @@ class ASFF(nn.Module):
         else:
             raise ValueError(f"ASFF expects 3 inputs, got {len(x) if isinstance(x, (list, tuple)) else 'single tensor'}")
         
-        # Adjust channels first
-        x_level_0 = self.channel_adjust_0(x_level_0)
-        x_level_1 = self.channel_adjust_1(x_level_1)
-        x_level_2 = self.channel_adjust_2(x_level_2)
+        # Adjust channels first - CRITICAL: must be done before any spatial operations
+        x_level_0_adj = self.channel_adjust_0(x_level_0)
+        x_level_1_adj = self.channel_adjust_1(x_level_1)
+        x_level_2_adj = self.channel_adjust_2(x_level_2)
         
         # Resize features to match the target level's spatial size
         if self.level == 0:
-            level_0_resized = x_level_0
-            level_1_resized = self.stride_level_1(x_level_1)
-            level_2_resized = self.stride_level_2(x_level_2)
+            level_0_resized = x_level_0_adj
+            level_1_resized = self.stride_level_1(x_level_1_adj)
+            level_2_resized = self.stride_level_2(x_level_2_adj)
         elif self.level == 1:
-            level_0_resized = self.stride_level_0(x_level_0)
-            level_1_resized = x_level_1
-            level_2_resized = self.stride_level_2(x_level_2)
+            level_0_resized = self.stride_level_0(x_level_0_adj)
+            level_1_resized = x_level_1_adj
+            level_2_resized = self.stride_level_2(x_level_2_adj)
         else:  # level == 2
-            level_0_resized = self.stride_level_0(x_level_0)
-            level_1_resized = self.stride_level_1(x_level_1)
-            level_2_resized = x_level_2
+            level_0_resized = self.stride_level_0(x_level_0_adj)
+            level_1_resized = self.stride_level_1(x_level_1_adj)
+            level_2_resized = x_level_2_adj
         
         # Compute attention weights
         level_0_weight_v = self.weight_level_0(level_0_resized)
