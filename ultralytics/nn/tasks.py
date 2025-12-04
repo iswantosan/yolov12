@@ -1079,9 +1079,25 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
+        elif m is DeformConv:
+            # DeformConv: args = [c1, c2, k, s, ...]
+            # Auto-detect c1 from input if not provided correctly
+            c1_input = ch[f]  # actual input channels
+            if len(args) >= 2 and args[0] != c1_input:
+                # Update c1 to match actual input channels
+                args[0] = c1_input
+            c2 = args[1] if len(args) >= 2 else c1_input
         elif m is ASFF:
             # ASFF takes 3 inputs and outputs channels equal to the level's channels
-            # args: [level, c1, c2] where c1 and c2 should be equal
+            # args: [level, c1, c2, ch_in] where c1 and c2 should be equal
+            # ch_in is optional list of input channels [ch0, ch1, ch2]
+            if len(args) < 4 or not isinstance(args[3], (list, tuple)):
+                # Auto-detect input channels from the feature maps
+                ch_in = [ch[x] for x in f]
+                if len(args) >= 4:
+                    args[3] = ch_in
+                else:
+                    args.append(ch_in)
             c2 = args[2]  # output channels
         else:
             c2 = ch[f]

@@ -1441,16 +1441,44 @@ class ASFF(nn.Module):
     
     Args:
         level (int): Current feature level (0, 1, or 2 for P3, P4, P5).
-        c1 (int): Number of input channels for each feature level.
-        c2 (int): Number of output channels (should equal c1).
+        c1 (int): Number of output channels (target channel dimension).
+        c2 (int): Number of output channels (should equal c1, kept for compatibility).
+        ch_in (list, optional): List of input channels for [level_0, level_1, level_2]. 
+                               If None, assumes all inputs have c1 channels.
     """
     
-    def __init__(self, level, c1, c2):
+    def __init__(self, level, c1, c2, ch_in=None):
         """Initialize ASFF module with level and channel dimensions."""
         super().__init__()
         assert c1 == c2, f"ASFF requires c1 == c2 (got c1={c1}, c2={c2})"
         self.level = level
         self.c = c1
+        
+        # If ch_in is provided, use it; otherwise assume all inputs have c1 channels
+        if ch_in is None:
+            ch_in = [c1, c1, c1]
+        elif isinstance(ch_in, (list, tuple)) and len(ch_in) == 3:
+            ch_in = list(ch_in)
+        else:
+            ch_in = [c1, c1, c1]
+        
+        self.ch_in = ch_in
+        
+        # Channel adjustment layers (if needed)
+        if ch_in[0] != c1:
+            self.channel_adjust_0 = Conv(ch_in[0], c1, 1, 1)
+        else:
+            self.channel_adjust_0 = nn.Identity()
+            
+        if ch_in[1] != c1:
+            self.channel_adjust_1 = Conv(ch_in[1], c1, 1, 1)
+        else:
+            self.channel_adjust_1 = nn.Identity()
+            
+        if ch_in[2] != c1:
+            self.channel_adjust_2 = Conv(ch_in[2], c1, 1, 1)
+        else:
+            self.channel_adjust_2 = nn.Identity()
         
         # Interpolation layers for different levels
         if level == 0:  # P3 level
@@ -1486,9 +1514,9 @@ class ASFF(nn.Module):
         
         Args:
             x: List of 3 feature tensors [x_level_0, x_level_1, x_level_2] or tuple.
-               x_level_0: Feature from level 0 (P3).
-               x_level_1: Feature from level 1 (P4).
-               x_level_2: Feature from level 2 (P5).
+               x_level_0: Feature from level 0 (P2/P3).
+               x_level_1: Feature from level 1 (P3/P4).
+               x_level_2: Feature from level 2 (P4/P5).
             
         Returns:
             Fused feature at the current level.
@@ -1499,6 +1527,12 @@ class ASFF(nn.Module):
         else:
             raise ValueError(f"ASFF expects 3 inputs, got {len(x) if isinstance(x, (list, tuple)) else 'single tensor'}")
         
+        # Adjust channels first
+        x_level_0 = self.channel_adjust_0(x_level_0)
+        x_level_1 = self.channel_adjust_1(x_level_1)
+        x_level_2 = self.channel_adjust_2(x_level_2)
+        
+        # Resize features to match the target level's spatial size
         if self.level == 0:
             level_0_resized = x_level_0
             level_1_resized = self.stride_level_1(x_level_1)
