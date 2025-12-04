@@ -66,6 +66,8 @@ from ultralytics.nn.modules import (
     WorldDetect,
     v10Detect,
     A2C2f,
+    ASFF,
+    DeformConv,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1077,6 +1079,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
+        elif m is ASFF:
+            # ASFF takes 3 inputs and outputs channels equal to the level's channels
+            # args: [level, c1, c2] where c1 and c2 should be equal
+            c2 = args[2]  # output channels
         else:
             c2 = ch[f]
 

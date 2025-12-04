@@ -52,6 +52,8 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
+    "ASFF",
+    "DeformConv",
 )
 
 
@@ -1427,3 +1429,188 @@ class A2C2f(nn.Module):
         if self.gamma is not None:
             return x + self.gamma.view(1, -1, 1, 1) * self.cv2(torch.cat(y, 1))
         return self.cv2(torch.cat(y, 1))
+
+
+class ASFF(nn.Module):
+    """
+    Adaptively Spatial Feature Fusion (ASFF) module.
+    
+    This module adaptively fuses multi-scale features by learning spatial attention weights
+    for each feature level. Proposed in "Learning Spatial Fusion for Single-Shot Object Detection"
+    (https://arxiv.org/abs/1911.09516).
+    
+    Args:
+        level (int): Current feature level (0, 1, or 2 for P3, P4, P5).
+        c1 (int): Number of input channels for each feature level.
+        c2 (int): Number of output channels (should equal c1).
+    """
+    
+    def __init__(self, level, c1, c2):
+        """Initialize ASFF module with level and channel dimensions."""
+        super().__init__()
+        assert c1 == c2, f"ASFF requires c1 == c2 (got c1={c1}, c2={c2})"
+        self.level = level
+        self.c = c1
+        
+        # Interpolation layers for different levels
+        if level == 0:  # P3 level
+            self.interp = nn.Upsample(scale_factor=2, mode='nearest')
+            self.stride_level_1 = Conv(c1, c1, 3, 2, 1)
+            self.stride_level_2 = nn.Sequential(
+                Conv(c1, c1, 3, 2, 1),
+                nn.MaxPool2d(kernel_size=2, stride=2)
+            )
+        elif level == 1:  # P4 level
+            self.interp = nn.Upsample(scale_factor=2, mode='nearest')
+            self.stride_level_0 = Conv(c1, c1, 3, 2, 1)
+            self.stride_level_2 = Conv(c1, c1, 3, 2, 1)
+        else:  # P5 level
+            self.interp = nn.Upsample(scale_factor=2, mode='nearest')
+            self.stride_level_0 = nn.Sequential(
+                Conv(c1, c1, 3, 2, 1),
+                nn.MaxPool2d(kernel_size=2, stride=2)
+            )
+            self.stride_level_1 = Conv(c1, c1, 3, 2, 1)
+        
+        # Learnable spatial attention weights
+        self.weight_level_0 = Conv(c1, c1, 1, 1, act=False)
+        self.weight_level_1 = Conv(c1, c1, 1, 1, act=False)
+        self.weight_level_2 = Conv(c1, c1, 1, 1, act=False)
+        
+        # Normalization
+        self.weight_levels = nn.Conv2d(c1 * 3, 3, 1, 1, 0)
+        
+    def forward(self, x):
+        """
+        Forward pass through ASFF module.
+        
+        Args:
+            x: List of 3 feature tensors [x_level_0, x_level_1, x_level_2] or tuple.
+               x_level_0: Feature from level 0 (P3).
+               x_level_1: Feature from level 1 (P4).
+               x_level_2: Feature from level 2 (P5).
+            
+        Returns:
+            Fused feature at the current level.
+        """
+        # Handle both list and tuple inputs
+        if isinstance(x, (list, tuple)) and len(x) == 3:
+            x_level_0, x_level_1, x_level_2 = x
+        else:
+            raise ValueError(f"ASFF expects 3 inputs, got {len(x) if isinstance(x, (list, tuple)) else 'single tensor'}")
+        
+        if self.level == 0:
+            level_0_resized = x_level_0
+            level_1_resized = self.stride_level_1(x_level_1)
+            level_2_resized = self.stride_level_2(x_level_2)
+        elif self.level == 1:
+            level_0_resized = self.stride_level_0(x_level_0)
+            level_1_resized = x_level_1
+            level_2_resized = self.stride_level_2(x_level_2)
+        else:  # level == 2
+            level_0_resized = self.stride_level_0(x_level_0)
+            level_1_resized = self.stride_level_1(x_level_1)
+            level_2_resized = x_level_2
+        
+        # Compute attention weights
+        level_0_weight_v = self.weight_level_0(level_0_resized)
+        level_1_weight_v = self.weight_level_1(level_1_resized)
+        level_2_weight_v = self.weight_level_2(level_2_resized)
+        
+        levels_weight_v = torch.cat((level_0_weight_v, level_1_weight_v, level_2_weight_v), 1)
+        levels_weight = self.weight_levels(levels_weight_v)
+        levels_weight = F.softmax(levels_weight, dim=1)
+        
+        # Fused output
+        fused_out_reduced = level_0_resized * levels_weight[:, 0:1, :, :] + \
+                           level_1_resized * levels_weight[:, 1:2, :, :] + \
+                           level_2_resized * levels_weight[:, 2:3, :, :]
+        
+        return fused_out_reduced
+
+
+class DeformConv(nn.Module):
+    """
+    Deformable Convolution module (simplified version).
+    
+    This module implements a simplified deformable convolution. For production use,
+    consider using torchvision.ops.deform_conv2d or mmcv.ops.DeformConv2d.
+    
+    Args:
+        c1 (int): Number of input channels.
+        c2 (int): Number of output channels.
+        k (int): Kernel size (default: 3).
+        s (int): Stride (default: 1).
+        p (int): Padding (default: None, auto-calculated).
+        g (int): Groups (default: 1).
+        d (int): Dilation (default: 1).
+        act (bool): Whether to apply activation (default: True).
+    """
+    
+    def __init__(self, c1, c2, k=3, s=1, p=None, g=1, d=1, act=True):
+        """Initialize Deformable Convolution module."""
+        super().__init__()
+        self.k = k
+        self.s = s
+        self.p = autopad(k, p, d) if p is None else p
+        self.g = g
+        self.d = d
+        
+        # Try to use torchvision.ops.deform_conv2d if available
+        try:
+            from torchvision.ops import deform_conv2d
+            self.use_torchvision = True
+            self.deform_conv2d = deform_conv2d
+        except ImportError:
+            self.use_torchvision = False
+        
+        # Offset convolution: generates 2*k*k offsets (x and y for each sampling point)
+        self.offset_conv = nn.Conv2d(c1, 2 * k * k * g, k, s, self.p, groups=1, dilation=d, bias=True)
+        # Initialize offsets to zero
+        nn.init.constant_(self.offset_conv.weight, 0)
+        nn.init.constant_(self.offset_conv.bias, 0)
+        
+        # Regular convolution as fallback (will be replaced if torchvision available)
+        self.conv = nn.Conv2d(c1, c2, k, s, self.p, groups=g, dilation=d, bias=False)
+        
+        # Batch normalization
+        self.bn = nn.BatchNorm2d(c2)
+        
+        # Activation
+        self.act = Conv.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+        
+    def forward(self, x):
+        """
+        Forward pass through deformable convolution.
+        
+        Args:
+            x: Input tensor of shape (B, C, H, W).
+            
+        Returns:
+            Output tensor after deformable convolution.
+        """
+        if self.use_torchvision:
+            # Generate offsets
+            offset = self.offset_conv(x)
+            
+            # Apply deformable convolution
+            output = self.deform_conv2d(
+                x,
+                offset,
+                self.conv.weight,
+                bias=None,
+                stride=(self.s, self.s),
+                padding=(self.p, self.p),
+                dilation=(self.d, self.d)
+            )
+        else:
+            # Fallback to regular convolution with offset-aware feature enhancement
+            # This is a simplified approximation
+            offset = self.offset_conv(x)
+            # Use offset as attention-like modulation
+            offset_attention = torch.sigmoid(offset.mean(dim=1, keepdim=True))
+            x_modulated = x * (1 + 0.1 * offset_attention)
+            output = self.conv(x_modulated)
+        
+        # Batch normalization and activation
+        return self.act(self.bn(output))
