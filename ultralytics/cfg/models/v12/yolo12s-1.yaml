@@ -1,0 +1,72 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with P2-P4 outputs optimized for small objects.
+# Improvements:
+# - Expanded neck structure with enhanced small-object-detection head (P2)
+# - Removed P5/large-object head, increased multi-scale feature fusion frequency
+# - Added PW (Pointwise) convolutions for better feature fusion
+
+# Parameters
+nc: 1 # number of classes
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  s: [0.50, 0.50, 1024]
+
+# YOLO12s backbone (P3–P5 original)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]] # 2-P2/4
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 2, C3k2, [512, False, 0.25]] # 4-P3/8
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 4, A2C2f, [512, True, 4]] # 6-P4/16
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32 (not used in detection)
+  - [-1, 4, A2C2f, [1024, True, 1]] # 8-P5/32 (not used in detection)
+
+head:
+  # ---------- P4 HEAD (dari backbone P4 = 6) ----------
+  - [6, 1, Conv, [256, 1, 1]] # 9: PW conv untuk channel reduction P4
+  - [-1, 1, A2C2f, [256, False, -1]] # 10: P4 head (stride 16)
+
+  # ---------- P4 -> P3 ----------
+  - [10, 1, nn.Upsample, [None, 2, "nearest"]] # 11: upsample P4 -> P3 (stride 8)
+  - [[-1, 4], 1, Concat, [1]] # 12: concat dengan backbone P3 (4)
+  - [-1, 1, Conv, [256, 1, 1]] # 13: PW conv setelah concat
+  - [-1, 2, A2C2f, [256, False, -1]] # 14: P3 head
+
+  # ---------- P3 -> P2 (Expanded for small object detection) ----------
+  - [14, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample P3 -> P2 (stride 4)
+  - [[-1, 2], 1, Concat, [1]] # 16: concat dengan backbone P2 (2)
+  - [-1, 1, Conv, [256, 1, 1]] # 17: PW conv setelah concat P2
+  - [-1, 2, A2C2f, [256, False, -1]] # 18: P2 initial processing
+  - [-1, 1, Conv, [256, 1, 1]] # 19: PW conv untuk feature refinement
+  - [-1, 1, A2C2f, [256, False, -1]] # 20: P2 head enhanced (smallest objects)
+
+  # ---------- Multi-scale feature fusion dengan downsampling tambahan ----------
+  # P2 -> P3 (Enhanced downsampling)
+  - [20, 1, Conv, [256, 3, 2]] # 21: P2→P3 downsample
+  - [[-1, 14], 1, Concat, [1]] # 22: concat dengan P3 head (14)
+  - [-1, 1, Conv, [256, 1, 1]] # 23: PW conv setelah concat
+  - [-1, 1, A2C2f, [256, False, -1]] # 24: P3 enhanced
+
+  # Additional downsampling untuk meningkatkan multi-scale fusion
+  - [24, 1, Conv, [256, 3, 2]] # 25: P3→P4 additional downsample
+  - [[-1, 10], 1, Concat, [1]] # 26: concat dengan P4 head (10)
+  - [-1, 1, Conv, [256, 1, 1]] # 27: PW conv setelah concat
+  - [-1, 1, A2C2f, [256, False, -1]] # 28: P4 enhanced
+
+  # P4 -> P3 (Bottom-up untuk refinement)
+  - [28, 1, nn.Upsample, [None, 2, "nearest"]] # 29: upsample P4 enhanced -> P3
+  - [[-1, 24], 1, Concat, [1]] # 30: concat dengan P3 enhanced (24)
+  - [-1, 1, Conv, [256, 1, 1]] # 31: PW conv setelah concat
+  - [-1, 1, A2C2f, [256, False, -1]] # 32: P3 final enhanced
+
+  # P3 -> P2 (Bottom-up untuk refinement)
+  - [32, 1, nn.Upsample, [None, 2, "nearest"]] # 33: upsample P3 final -> P2
+  - [[-1, 20], 1, Concat, [1]] # 34: concat dengan P2 head (20)
+  - [-1, 1, Conv, [256, 1, 1]] # 35: PW conv setelah concat
+  - [-1, 1, A2C2f, [256, False, -1]] # 36: P2 final enhanced
+
+  # ---------- Detect dengan P2, P3, P4 (P5 removed) ----------
+  - [[36, 32, 28], 1, Detect, [nc]] # 37: Detect(P2, P3, P4) - no P5

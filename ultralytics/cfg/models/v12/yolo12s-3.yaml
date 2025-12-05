@@ -1,0 +1,22 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with P2 output only. For Usage examples see https://docs.ultralytics.com/tasks/detect
+
+# Parameters
+nc: 1 # number of classes
+scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call yolov12.yaml with scale 'n'
+  # [depth, width, max_channels]
+  s: [0.50, 0.50, 1024] # summary: 465 layers, 9,285,632 parameters, 9,285,616 gradients, 21.7 GFLOPs
+
+# YOLO12n backbone
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]] # 0 - P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1 - P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]] # 2 - P2/4 (dipakai Detect)
+
+# YOLO12n head - P2 only
+head:
+  # ---------- P2 HEAD (dari backbone P2 = 2) ----------
+  - [2, 2, A2C2f, [256, False, -1]] # 3: P2 head processing
+
+  # ---------- Detect dengan P2 saja ----------
+  - [[-1], 1, Detect, [nc]] # Detect(P2) - use processed head output

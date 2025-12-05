@@ -1,0 +1,62 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with P2-P4 outputs for small object detection
+
+# Parameters
+nc: 1 # number of classes (BTA)
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# YOLO12 backbone (TIDAK DIUBAH)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 4, C3k2, [256, False, 0.25]] # 2
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 4, C3k2, [512, False, 0.25]] # 4
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 4, A2C2f, [512, True, 4]] # 6
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 4, A2C2f, [1024, True, 1]] # 8
+
+# YOLO12 head (P2-P4)
+head:
+  # Top-down pathway
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9: upsample dari P5
+  - [[-1, 6], 1, Concat, [1]] # 10: cat dengan P4 (dari backbone layer 6)
+  - [-1, 2, A2C2f, [512, False, -1]] # 11: process P4
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 12: upsample dari P4
+  - [[-1, 4], 1, Concat, [1]] # 13: cat dengan P3 (dari backbone layer 4)
+  - [-1, 2, A2C2f, [256, False, -1]] # 14: process P3
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample dari P3
+  - [[-1, 2], 1, Concat, [1]] # 16: cat dengan P2 (dari backbone layer 2)
+  - [-1, 2, A2C2f, [128, False, -1]] # 17: process P2 (output channels 128)
+
+  # Bottom-up pathway
+  - [-1, 1, Conv, [256, 3, 2]] # 18: downsample P2 (128 -> 256 channels)
+  - [[-1, 14], 1, Concat, [1]] # 19: cat dengan P3 head (layer 14)
+  - [-1, 2, A2C2f, [256, False, -1]] # 20: process P3
+
+  - [-1, 1, Conv, [512, 3, 2]] # 21: downsample P3 (256 -> 512 channels)
+  - [[-1, 11], 1, Concat, [1]] # 22: cat dengan P4 head (layer 11)
+  - [-1, 2, A2C2f, [512, False, -1]] # 23: process P4
+
+  - [[17, 20, 23], 1, Detect, [nc]] # 24: Detect(P2, P3, P4)
+
+# light BiFPN (Bidirectional Feature Pyramid Network): 79.7
+
+# Validating tb_detections_project/YOLOv12s_vanilla_run1_stage1/weights/best.pt...
+# Ultralytics 8.3.63 🚀 Python-3.12.12 torch-2.9.0+cu126 CUDA:0 (Tesla T4, 15095MiB)
+# YOLO12s-k summary (fused): 388 layers, 7,150,483 parameters, 0 gradients, 28.3 GFLOPs
+#                  Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100%|██████████| 5/5 [00:05<00:00,  1.07s/it]
+#                    all        140       1127       0.73      0.742      0.797      0.384
+# Speed: 0.3ms preprocess, 11.5ms inference, 0.0ms loss, 5.7ms postprocess per image
+# Results saved to tb_detections_project/YOLOv12s_vanilla_run1_stage1
+

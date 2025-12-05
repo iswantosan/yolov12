@@ -1,0 +1,44 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with C2fPSA (Position-Sensitive Attention) in Neck
+# Ablasi 7: Baseline (Ablasi 4) + C2fPSA untuk enhanced attention di neck
+
+# Parameters
+nc: 80 # number of classes
+scales: # model compound scaling constants
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# YOLO12n backbone (SAMA DENGAN ABLASI 4)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 4, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 4, C3k2, [512, False, 0.25]]
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 4, A2C2f, [512, True, 4]]
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 4, A2C2f, [1024, True, 1]] # 8
+
+# YOLO12n head (ABLASI 7: TOP-DOWN + C2fPSA)
+head:
+  # ---------- TOP-DOWN (P5 -> P4 -> P3 -> P2) ----------
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9: upsample P5 -> P4 scale
+  - [[-1, 6], 1, Concat, [1]] # 10: cat backbone P4 (6)
+  - [-1, 2, C2fPSA, [512, 0.5]] # 11: P4_n dengan PSA attention (c2=512, e=0.5, n=2 dari repeats, c1 auto dari input)
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 12: upsample P4_n -> P3 scale
+  - [[-1, 4], 1, Concat, [1]] # 13: cat backbone P3 (4)
+  - [-1, 2, C2fPSA, [256, 0.5]] # 14: P3_n dengan PSA attention (c2=256, e=0.5, n=2 dari repeats, c1 auto dari input)
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample P3_n -> P2 scale
+  - [[-1, 2], 1, Concat, [1]] # 16: cat backbone P2 (2)
+  - [-1, 2, C2fPSA, [256, 0.5]] # 17: P2_n dengan PSA attention (c2=256, e=0.5, n=2 dari repeats, c1 auto dari input)
+
+  # ---------- Detect di 4 scale: P2, P3, P4, P5 ----------
+  - [[17, 14, 11, 8], 1, Detect, [nc]] # Detect(P2+PSA, P3+PSA, P4+PSA, P5)
+
