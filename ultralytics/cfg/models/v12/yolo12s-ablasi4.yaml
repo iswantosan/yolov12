@@ -1,53 +1,53 @@
 # YOLOv12 🚀, AGPL-3.0 license
-# YOLOv12 object detection model with P2-P5 outputs (Top-down only, no bottom-up)
-# Ablasi 4: Simplified neck with only top-down pathway
+# YOLOv12 object detection model with P2-P4 outputs + SPPF
+# Ablasi 4: Baseline (Ablasi 2) + SPPF untuk multi-scale spatial pooling
+# SPPF ditambahkan sebelum A2C2f di backbone (mengikuti pattern YOLOv10/11)
 
 # Parameters
-nc: 80 # number of classes
-scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call yolov12.yaml with scale 'n'
-  # [depth, width, max_channels]
-  n: [0.50, 0.25, 1024] # summary: 465 layers, 2,603,056 parameters, 2,603,040 gradients, 6.7 GFLOPs
-  s: [0.50, 0.50, 1024] # summary: 465 layers, 9,285,632 parameters, 9,285,616 gradients, 21.7 GFLOPs
-  m: [0.50, 1.00, 512] # summary: 501 layers, 20,201,216 parameters, 20,201,200 gradients, 68.1 GFLOPs
-  l: [1.00, 1.00, 512] # summary: 831 layers, 26,454,880 parameters, 26,454,864 gradients, 89.7 GFLOPs
-  x: [1.00, 1.50, 512] # summary: 831 layers, 59,216,928 parameters, 59,216,912 gradients, 200.3 GFLOPs
+nc: 1 # number of classes (BTA)
+scales: # model compound scaling constants
+  s: [0.50, 0.50, 1024]
 
-# YOLO12n backbone (SAMA DENGAN ABLASI 1)
+# YOLO12 backbone dengan SPPF
 backbone:
   # [from, repeats, module, args]
   - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
   - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
-  - [-1, 4, C3k2, [256, False, 0.25]]
+  - [-1, 4, C3k2, [256, False, 0.25]] # 2
   - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
-  - [-1, 4, C3k2, [512, False, 0.25]]
+  - [-1, 4, C3k2, [512, False, 0.25]] # 4
   - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
-  - [-1, 4, A2C2f, [512, True, 4]]
+  - [-1, 4, A2C2f, [512, True, 4]] # 6
   - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
-  - [-1, 4, A2C2f, [1024, True, 1]] # 8
+  - [-1, 1, SPPF, [1024, 5]] # 8: SPPF untuk multi-scale spatial pooling (mengikuti YOLOv10/11 pattern)
+  - [-1, 4, A2C2f, [1024, True, 1]] # 9: A2C2f setelah SPPF
 
-# YOLO12n head (ABLASI 4: TOP-DOWN ONLY, NO BOTTOM-UP)
+# YOLO12 head (P2-P4)
 head:
-  # ---------- TOP-DOWN (P5 -> P4 -> P3 -> P2) ----------
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9: upsample P5 -> P4 scale
-  - [[-1, 6], 1, Concat, [1]] # 10: cat backbone P4 (6)
-  - [-1, 2, A2C2f, [512, False, -1]] # 11: P4_n (refined P4)
+  # Top-down pathway
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 10: upsample dari P5 (layer 9)
+  - [[-1, 6], 1, Concat, [1]] # 11: cat dengan P4 (dari backbone layer 6)
+  - [-1, 2, A2C2f, [512, False, -1]] # 12: process P4
 
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 12: upsample P4_n -> P3 scale
-  - [[-1, 4], 1, Concat, [1]] # 13: cat backbone P3 (4)
-  - [-1, 2, A2C2f, [256, False, -1]] # 14: P3_n (refined P3)
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 13: upsample dari P4
+  - [[-1, 4], 1, Concat, [1]] # 14: cat dengan P3 (dari backbone layer 4)
+  - [-1, 2, A2C2f, [256, False, -1]] # 15: process P3
 
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample P3_n -> P2 scale
-  - [[-1, 2], 1, Concat, [1]] # 16: cat backbone P2 (2)
-  - [-1, 2, A2C2f, [256, False, -1]] # 17: P2_n (refined P2, STRIDE 4)
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 16: upsample dari P3
+  - [[-1, 2], 1, Concat, [1]] # 17: cat dengan P2 (dari backbone layer 2)
+  - [-1, 2, A2C2f, [128, False, -1]] # 18: process P2 (output channels 128)
 
-  # ---------- Detect di 4 scale: P2, P3, P4, P5 (dari top-down pathway) ----------
-  # Note: P5 langsung dari backbone layer 8, P4-P2 dari top-down pathway
-  - [[17, 14, 11, 8], 1, Detect, [nc]] # Detect(P2, P3, P4, P5) - top-down only
+  # Bottom-up pathway
+  - [-1, 1, Conv, [256, 3, 2]] # 19: downsample P2 (128 -> 256 channels)
+  - [[-1, 15], 1, Concat, [1]] # 20: cat dengan P3 head (layer 15)
+  - [-1, 2, A2C2f, [256, False, -1]] # 21: process P3
 
-# Ultralytics 8.3.63 🚀 Python-3.12.12 torch-2.9.0+cu126 CUDA:0 (Tesla T4, 15095MiB)
-# YOLO12s-ablasi4 summary (fused): 352 layers, 6,983,988 parameters, 0 gradients, 31.1 GFLOPs
-#                  Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100%|██████████| 5/5 [00:02<00:00,  1.80it/s]
-#                    all        140       1127      0.754      0.729      0.806      0.398
-# Speed: 0.2ms preprocess, 8.9ms inference, 0.0ms loss, 1.1ms postprocess per image
-# Results saved to tb_detections/YOLOv12s_vanilla_run1_stage1
+  - [-1, 1, Conv, [512, 3, 2]] # 22: downsample P3 (256 -> 512 channels)
+  - [[-1, 12], 1, Concat, [1]] # 23: cat dengan P4 head (layer 12)
+  - [-1, 2, A2C2f, [512, False, -1]] # 24: process P4
 
+  - [[18, 21, 24], 1, Detect, [nc]] # 25: Detect(P2, P3, P4)
+
+# Ablasi 4: Baseline + SPPF
+# Expected: Better multi-scale feature extraction dengan spatial pyramid pooling
+# Pattern: SPPF sebelum A2C2f (mengikuti YOLOv10/11: SPPF → Attention)

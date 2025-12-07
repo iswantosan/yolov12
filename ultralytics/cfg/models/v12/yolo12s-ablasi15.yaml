@@ -1,0 +1,62 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with P2-P5 outputs (Bi-directional FPN: Top-down + Bottom-up)
+# Ablasi 15: Baseline (Ablasi 13) + Bi-directional FPN + Adaptive area + Increased repeats di backbone P4/P5
+
+# Parameters
+nc: 1 # number of classes
+scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call yolov12.yaml with scale 'n'
+  # [depth, width, max_channels]
+  s: [0.50, 0.50, 1024] # summary: 465 layers, 9,285,632 parameters, 9,285,616 gradients, 21.7 GFLOPs
+
+# YOLO12n backbone (ABLASI 15: Increased repeats di P4/P5 untuk stronger features)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 4, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 4, C3k2, [512, False, 0.25]]
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 5, A2C2f, [512, True, 8, True]] # 6: A2C2f dengan n=5, area=8 dan residual=True (increased from 4)
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 5, A2C2f, [1024, True, 8, True]] # 8: A2C2f dengan n=5, area=8 dan residual=True (increased from 4)
+
+# YOLO12n head (ABLASI 15: BI-DIRECTIONAL FPN dengan adaptive area dan increased repeats)
+head:
+  # ---------- TOP-DOWN PATHWAY (P5 -> P4 -> P3 -> P2) ----------
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9: upsample P5 -> P4 scale
+  - [[-1, 6], 1, Concat, [1]] # 10: cat backbone P4 (6)
+  - [-1, 3, A2C2f, [512, False, 8, True]] # 11: P4_td dengan n=3, area=8 dan residual=True
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 12: upsample P4_td -> P3 scale
+  - [[-1, 4], 1, Concat, [1]] # 13: cat backbone P3 (4)
+  - [-1, 3, A2C2f, [256, False, 16, True]] # 14: P3_td dengan n=3, area=16 (lebih besar untuk high-res) dan residual=True
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample P3_td -> P2 scale
+  - [[-1, 2], 1, Concat, [1]] # 16: cat backbone P2 (2)
+  - [-1, 3, A2C2f, [256, False, 16, True]] # 17: P2_td dengan n=3, area=16 dan residual=True
+
+  # ---------- BOTTOM-UP PATHWAY (P2 -> P3 -> P4 -> P5) untuk enhanced feature fusion ----------
+  - [-1, 1, Conv, [256, 3, 2]] # 18: downsample P2_td -> P3 scale
+  - [[-1, 14], 1, Concat, [1]] # 19: cat P3_td (14) dengan downsampled P2
+  - [-1, 2, A2C2f, [256, False, 16, True]] # 20: P3_bu dengan n=2, area=16 dan residual=True
+
+  - [-1, 1, Conv, [256, 3, 2]] # 21: downsample P3_bu -> P4 scale
+  - [[-1, 11], 1, Concat, [1]] # 22: cat P4_td (11) dengan downsampled P3_bu
+  - [-1, 2, A2C2f, [512, False, 8, True]] # 23: P4_bu dengan n=2, area=8 dan residual=True
+
+  - [-1, 1, Conv, [512, 3, 2]] # 24: downsample P4_bu -> P5 scale
+  - [[-1, 8], 1, Concat, [1]] # 25: cat backbone P5 (8) dengan downsampled P4_bu
+  - [-1, 2, A2C2f, [1024, False, 8, True]] # 26: P5_bu dengan n=2, area=8 dan residual=True
+
+  # ---------- Detect di 4 scale: P2_td, P3_bu, P4_bu, P5_bu (dari bi-directional pathway) ----------
+  # Note: Menggunakan P2 dari top-down, P3-P5 dari bottom-up untuk optimal feature representation
+  - [[17, 20, 23, 26], 1, Detect, [nc]] # Detect(P2_td, P3_bu, P4_bu, P5_bu) - bi-directional FPN dengan adaptive area
+
+# Validating tb_detections/YOLOv12s_vanilla_run1_stage1/weights/best.pt...
+# Ultralytics 8.3.63 🚀 Python-3.12.12 torch-2.9.0+cu126 CUDA:0 (Tesla T4, 15095MiB)
+# YOLO12s-ablasi15 summary (fused): 487 layers, 9,746,036 parameters, 0 gradients, 41.0 GFLOPs
+#                  Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100%|██████████| 5/5 [00:02<00:00,  1.77it/s]
+#                    all        140       1127       0.73      0.777      0.824      0.405
+# Speed: 0.1ms preprocess, 10.0ms inference, 0.0ms loss, 6.4ms postprocess per image
+# Results saved to tb_detections/YOLOv12s_vanilla_run1_stage1

@@ -1,0 +1,49 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with P2-P5 outputs (Top-down only, no bottom-up)
+# Ablasi 23: Baseline (Ablasi 21) + Increased head MLP ratio (3.0 instead of 2.5) untuk enhanced feature representation
+
+# Parameters
+nc: 1 # number of classes
+scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call yolov12.yaml with scale 'n'
+  # [depth, width, max_channels]
+  s: [0.50, 0.50, 1024] # summary: 465 layers, 9,285,632 parameters, 9,285,616 gradients, 21.7 GFLOPs
+
+# YOLO12n backbone (ABLASI 23: Sama dengan Ablasi 21 - Optimized MLP ratio 1.5 untuk lebih efisien di backbone)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 4, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 4, C3k2, [512, False, 0.25]]
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 4, A2C2f, [512, True, 8, True, 1.5]] # 6: A2C2f dengan area=8, residual=True, mlp_ratio=1.5 (optimized untuk backbone)
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 4, A2C2f, [1024, True, 8, True, 1.5]] # 8: A2C2f dengan area=8, residual=True, mlp_ratio=1.5 (optimized untuk backbone)
+
+# YOLO12n head (ABLASI 23: TOP-DOWN dengan MLP ratio 3.0 (increased from 2.5), increased repeats n=4, dan adaptive area)
+head:
+  # ---------- TOP-DOWN (P5 -> P4 -> P3 -> P2) ----------
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9: upsample P5 -> P4 scale
+  - [[-1, 6], 1, Concat, [1]] # 10: cat backbone P4 (6)
+  - [-1, 4, A2C2f, [512, False, 8, True, 3.0]] # 11: P4_n dengan n=4, area=8, residual=True, mlp_ratio=3.0 (increased from 2.5)
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 12: upsample P4_n -> P3 scale
+  - [[-1, 4], 1, Concat, [1]] # 13: cat backbone P3 (4)
+  - [-1, 4, A2C2f, [256, False, 16, True, 3.0]] # 14: P3_n dengan n=4, area=16 (lebih besar untuk high-res), residual=True, mlp_ratio=3.0 (increased from 2.5)
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample P3_n -> P2 scale
+  - [[-1, 2], 1, Concat, [1]] # 16: cat backbone P2 (2)
+  - [-1, 4, A2C2f, [256, False, 16, True, 3.0]] # 17: P2_n dengan n=4, area=16, residual=True, mlp_ratio=3.0 (increased from 2.5)
+
+  # ---------- Detect di 4 scale: P2, P3, P4, P5 (dari top-down pathway) ----------
+  # Note: P5 langsung dari backbone layer 8, P4-P2 dari top-down pathway
+  - [[17, 14, 11, 8], 1, Detect, [nc]] # Detect(P2, P3, P4, P5) - top-down dengan increased head MLP ratio 3.0 dan repeats n=4
+
+# Validating tb_detections/YOLOv12s_vanilla_run1_stage1/weights/best.pt...
+# Ultralytics 8.3.63 🚀 Python-3.12.12 torch-2.9.0+cu126 CUDA:0 (Tesla T4, 15095MiB)
+# YOLO12s-ablasi23 summary (fused): 406 layers, 6,976,820 parameters, 0 gradients, 34.8 GFLOPs
+#                  Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100%|██████████| 5/5 [00:02<00:00,  1.84it/s]
+#                    all        140       1127      0.732       0.77      0.821      0.399
+# Speed: 0.1ms preprocess, 8.6ms inference, 0.0ms loss, 1.3ms postprocess per image
+# Results saved to tb_detections/YOLOv12s_vanilla_run1_stage1

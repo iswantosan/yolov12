@@ -1,0 +1,46 @@
+# YOLOv12 🚀, AGPL-3.0 license
+# YOLOv12 object detection model with P2-P5 outputs (Top-down only, no bottom-up)
+# Ablasi 21: Baseline (Ablasi 16) + Increased repeats di head (n=4 instead of n=3) untuk stronger feature fusion
+
+# Parameters
+nc: 1 # number of classes
+scales: # model compound scaling constants, i.e. 'model=yolov12n.yaml' will call yolov12.yaml with scale 'n'
+  # [depth, width, max_channels]
+  s: [0.50, 0.50, 1024] # summary: 465 layers, 9,285,632 parameters, 9,285,616 gradients, 21.7 GFLOPs
+
+# YOLO12n backbone (ABLASI 21: Sama dengan Ablasi 16 - Optimized MLP ratio 1.5 untuk lebih efisien di backbone)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 4, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 4, C3k2, [512, False, 0.25]]
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 4, A2C2f, [512, True, 8, True, 1.5]] # 6: A2C2f dengan area=8, residual=True, mlp_ratio=1.5 (optimized untuk backbone)
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 4, A2C2f, [1024, True, 8, True, 1.5]] # 8: A2C2f dengan area=8, residual=True, mlp_ratio=1.5 (optimized untuk backbone)
+
+# YOLO12n head (ABLASI 21: TOP-DOWN dengan MLP ratio 2.5, increased repeats n=4 (from n=3), dan adaptive area)
+head:
+  # ---------- TOP-DOWN (P5 -> P4 -> P3 -> P2) ----------
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 9: upsample P5 -> P4 scale
+  - [[-1, 6], 1, Concat, [1]] # 10: cat backbone P4 (6)
+  - [-1, 4, A2C2f, [512, False, 8, True, 2.5]] # 11: P4_n dengan n=4 (increased from 3), area=8, residual=True, mlp_ratio=2.5
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 12: upsample P4_n -> P3 scale
+  - [[-1, 4], 1, Concat, [1]] # 13: cat backbone P3 (4)
+  - [-1, 4, A2C2f, [256, False, 16, True, 2.5]] # 14: P3_n dengan n=4 (increased from 3), area=16 (lebih besar untuk high-res), residual=True, mlp_ratio=2.5
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 15: upsample P3_n -> P2 scale
+  - [[-1, 2], 1, Concat, [1]] # 16: cat backbone P2 (2)
+  - [-1, 4, A2C2f, [256, False, 16, True, 2.5]] # 17: P2_n dengan n=4 (increased from 3), area=16, residual=True, mlp_ratio=2.5
+
+  # ---------- Detect di 4 scale: P2, P3, P4, P5 (dari top-down pathway) ----------
+  # Note: P5 langsung dari backbone layer 8, P4-P2 dari top-down pathway
+  - [[17, 14, 11, 8], 1, Detect, [nc]] # Detect(P2, P3, P4, P5) - top-down dengan increased repeats n=4 di head
+
+
+    # Epoch    GPU_mem   box_loss   cls_loss   dfl_loss  Instances       Size
+    # 77/80      7.17G      1.695     0.9867      1.525         92        640: 100%|██████████| 64/64 [00:34<00:00,  1.88it/s]
+    #            Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100%|██████████| 5/5 [00:02<00:00,  1.78it/s]                   all        140       1127      0.752      0.792      0.829      0.411

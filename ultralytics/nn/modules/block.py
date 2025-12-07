@@ -1307,8 +1307,11 @@ class AAttn(nn.Module):
             exp_attn = torch.exp(attn - max_attn)
             attn = exp_attn / exp_attn.sum(dim=-1, keepdim=True)
             x = (v @ attn.transpose(-2, -1))
-            x = x.permute(0, 3, 1, 2)
-            v = v.permute(0, 3, 1, 2)
+            x = x.permute(0, 3, 1, 2).contiguous()
+            v = v.permute(0, 3, 1, 2).contiguous()
+            # Reshape from (B, N, num_heads, head_dim) to (B, N, C)
+            x = x.reshape(B, N, C)
+            v = v.reshape(B, N, C)
 
         if self.area > 1:
             x = x.reshape(B // self.area, N * self.area, C)
